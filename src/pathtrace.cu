@@ -6,6 +6,7 @@
 #include <thrust/execution_policy.h>
 #include <thrust/random.h>
 #include <thrust/remove.h>
+#include <thrust/sort.h>
 
 #include "sceneStructs.h"
 #include "scene.h"
@@ -80,6 +81,7 @@ static Geom* dev_geoms = NULL;
 static Material* dev_materials = NULL;
 static PathSegment* dev_paths = NULL;
 static ShadeableIntersection* dev_intersections = NULL;
+static int* dev_material_sort_indices = NULL;
 // TODO: static variables for device memory, any extra info you need, etc
 // ...
 
@@ -109,6 +111,8 @@ void pathtraceInit(Scene* scene)
     cudaMalloc(&dev_intersections, pixelcount * sizeof(ShadeableIntersection));
     cudaMemset(dev_intersections, 0, pixelcount * sizeof(ShadeableIntersection));
 
+    cudaMalloc(&dev_material_sort_indices, pixelcount * sizeof(int));
+
     // TODO: initialize any extra device memeory you need
 
     checkCUDAError("pathtraceInit");
@@ -121,6 +125,7 @@ void pathtraceFree()
     cudaFree(dev_geoms);
     cudaFree(dev_materials);
     cudaFree(dev_intersections);
+    cudaFree(dev_material_sort_indices);
     // TODO: clean up any extra device memory you created
 
     checkCUDAError("pathtraceFree");
@@ -285,6 +290,22 @@ __global__ void shadeMaterial(
     }
 }
 
+__global__ void prepareMaterialSortIndices(
+    int num_paths,
+    ShadeableIntersection* intersections,
+    int* sort_indices)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < num_paths)
+    {
+        if (intersections[idx].t > 0.0f) {
+            sort_indices[idx] = intersections[idx].materialId;
+        } else {
+            sort_indices[idx] = -1;
+        }
+    }
+}
+
 // Add the current iteration's output to the overall image
 __global__ void finalGather(int nPaths, glm::vec3* image, PathSegment* iterationPaths)
 {
@@ -379,6 +400,28 @@ void pathtrace(uchar4* pbo, int frame, int iter)
 
         // Shade path segments based on intersections and generate new rays by
         // evaluating the BSDF.
+        
+        if (guiData != NULL && guiData->MaterialSortingEnabled) {
+            prepareMaterialSortIndices<<<numblocksPathSegmentTracing, blockSize1d>>>(
+                num_paths,
+                dev_intersections,
+                dev_material_sort_indices
+            );
+            checkCUDAError("prepare material sort indices");
+            
+            thrust::sequence(thrust::device, dev_material_sort_indices, dev_material_sort_indices + num_paths);
+            
+            // Sort paths and intersections by material ID
+            thrust::sort_by_key(thrust::device, 
+                dev_material_sort_indices, dev_material_sort_indices + num_paths,
+                dev_paths);
+            thrust::sort_by_key(thrust::device,
+                dev_material_sort_indices, dev_material_sort_indices + num_paths,
+                dev_intersections);
+            
+            checkCUDAError("material sorting");
+        }
+        
         shadeMaterial<<<numblocksPathSegmentTracing, blockSize1d>>>(
             iter,
             num_paths,
