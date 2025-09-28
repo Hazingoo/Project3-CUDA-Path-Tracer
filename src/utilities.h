@@ -18,9 +18,10 @@
 class GuiDataContainer
 {
 public:
-    GuiDataContainer() : TracedDepth(0), MaterialSortingEnabled(false) {}
+    GuiDataContainer() : TracedDepth(0), MaterialSortingEnabled(false), AntialiasingEnabled(true) {}
     int TracedDepth;
     bool MaterialSortingEnabled;
+    bool AntialiasingEnabled;
 };
 
 namespace utilityCore
