@@ -266,11 +266,16 @@ __global__ void shadeMaterial(
     {
         ShadeableIntersection intersection = shadeableIntersections[idx];
         PathSegment& pathSegment = pathSegments[idx];
+
+        if (pathSegment.remainingBounces == 0) {
+            return;
+        }
         
         if (intersection.t > 0.0f) // if the intersection exists
         {
             // Set up the RNG
             thrust::default_random_engine rng = makeSeededRandomEngine(iter, idx, pathSegment.remainingBounces);
+
             
             Material material = materials[intersection.materialId];
             
@@ -281,7 +286,7 @@ __global__ void shadeMaterial(
             }
             else {
                 // Calculate intersection point
-                glm::vec3 intersectPoint = pathSegment.ray.origin + intersection.t * pathSegment.ray.direction;
+                glm::vec3 intersectPoint = getPointOnRay(pathSegment.ray, intersection.t);
                 
                 // Scatter the ray using BSDF evaluation
                 scatterRay(pathSegment, intersectPoint, intersection.surfaceNormal, material, rng);
@@ -289,9 +294,10 @@ __global__ void shadeMaterial(
                 // Decrement remaining bounces
                 pathSegment.remainingBounces--;
                 
-                // Terminate path if no more bounces
+                //// Terminate path if no more bounces
                 if (pathSegment.remainingBounces <= 0) {
                     pathSegment.color = glm::vec3(0.0f);
+                    return;
                 }
             }
         }
@@ -471,3 +477,4 @@ void pathtrace(uchar4* pbo, int frame, int iter)
 
     checkCUDAError("pathtrace");
 }
+
