@@ -111,3 +111,58 @@ __host__ __device__ float sphereIntersectionTest(
 
     return glm::length(r.origin - intersectionPoint);
 }
+
+__host__ __device__ bool triangleIntersectionTest(
+    Triangle triangle,
+    const Vertex* vertices,
+    Ray r,
+    glm::vec3 &intersectionPoint,
+    glm::vec3 &normal,
+    float &t)
+{
+    // Get triangle vertices using indices
+    glm::vec3 v0 = vertices[triangle.idx_v0].pos;
+    glm::vec3 v1 = vertices[triangle.idx_v1].pos;
+    glm::vec3 v2 = vertices[triangle.idx_v2].pos;
+    
+    // Moller-Trumbore algorithm
+    glm::vec3 edge1 = v1 - v0;
+    glm::vec3 edge2 = v2 - v0;
+    glm::vec3 h = glm::cross(r.direction, edge2);
+    float a = glm::dot(edge1, h);
+    
+    if (a > -0.00001f && a < 0.00001f) {
+        return false; // Ray is parallel to triangle
+    }
+    
+    float f = 1.0f / a;
+    glm::vec3 s = r.origin - v0;
+    float u = f * glm::dot(s, h);
+    
+    if (u < 0.0f || u > 1.0f) {
+        return false;
+    }
+    
+    glm::vec3 q = glm::cross(s, edge1);
+    float v = f * glm::dot(r.direction, q);
+    
+    if (v < 0.0f || u + v > 1.0f) {
+        return false;
+    }
+    
+    t = f * glm::dot(edge2, q);
+    
+    if (t > 0.00001f) { // Ray intersection
+        intersectionPoint = r.origin + t * r.direction;
+        
+        // Interpolate normal using barycentric coordinates
+        float w = 1.0f - u - v;
+        normal = glm::normalize(w * vertices[triangle.idx_v0].nor + 
+                               u * vertices[triangle.idx_v1].nor + 
+                               v * vertices[triangle.idx_v2].nor);
+        
+        return true;
+    }
+    
+    return false;
+}

@@ -12,13 +12,33 @@
 enum GeomType
 {
     SPHERE,
-    CUBE
+    CUBE,
+    MESH
 };
 
 struct Ray
 {
     glm::vec3 origin;
     glm::vec3 direction;
+};
+
+struct Vertex
+{
+    glm::vec3 pos;
+    glm::vec3 nor;
+    
+    __host__ __device__ Vertex() {}
+    __host__ __device__ Vertex(glm::vec3 p, glm::vec3 n) : pos(p), nor(n) {}
+};
+
+struct Triangle
+{
+    int idx_v0, idx_v1, idx_v2;  // Vertex indices
+    int materialId;
+    
+    __host__ __device__ Triangle() : idx_v0(0), idx_v1(0), idx_v2(0), materialId(0) {}
+    __host__ __device__ Triangle(int v0, int v1, int v2, int matId) 
+        : idx_v0(v0), idx_v1(v1), idx_v2(v2), materialId(matId) {}
 };
 
 struct Geom
@@ -31,6 +51,13 @@ struct Geom
     glm::mat4 transform;
     glm::mat4 inverseTransform;
     glm::mat4 invTranspose;
+    
+    int numTriangles;
+    int triangleOffset;
+    int numVertices;
+    int vertexOffset;   
+    glm::vec3 bboxMin;  
+    glm::vec3 bboxMax;  
 };
 
 struct Material
