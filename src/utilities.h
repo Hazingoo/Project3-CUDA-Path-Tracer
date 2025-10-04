@@ -18,10 +18,15 @@
 class GuiDataContainer
 {
 public:
-    GuiDataContainer() : TracedDepth(0), MaterialSortingEnabled(false), AntialiasingEnabled(true) {}
+    GuiDataContainer() : TracedDepth(0), MaterialSortingEnabled(false), AntialiasingEnabled(true), 
+                         RussianRouletteEnabled(false), ActivePaths(0), TotalPaths(0), RenderTimeMs(0.0f) {}
     int TracedDepth;
     bool MaterialSortingEnabled;
     bool AntialiasingEnabled;
+    bool RussianRouletteEnabled;
+    int ActivePaths;
+    int TotalPaths;
+    float RenderTimeMs;
 };
 
 namespace utilityCore

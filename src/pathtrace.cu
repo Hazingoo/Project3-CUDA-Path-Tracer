@@ -22,6 +22,10 @@
 #define PI 3.14159265359f
 #endif
 
+// Russian Roulette parameters 
+#define RR_MIN_DEPTH 3
+
+
 #define FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #define checkCUDAError(msg) checkCUDAErrorFn(msg, FILENAME, __LINE__)
 void checkCUDAErrorFn(const char* msg, const char* file, int line)
@@ -346,7 +350,9 @@ __global__ void shadeMaterial(
     int num_paths,
     ShadeableIntersection* shadeableIntersections,
     PathSegment* pathSegments,
-    Material* materials)
+    Material* materials,
+    int currentDepth,
+    bool russianRouletteEnabled)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < num_paths)
@@ -378,10 +384,29 @@ __global__ void shadeMaterial(
                 // Scatter the ray using BSDF evaluation
                 scatterRay(pathSegment, intersectPoint, intersection.surfaceNormal, material, rng);
                 
+                // Russian Roulette 
+                if (russianRouletteEnabled && currentDepth >= RR_MIN_DEPTH) {
+                    float maxComponent = fmaxf(fmaxf(pathSegment.color.r, pathSegment.color.g), pathSegment.color.b);
+                    float q = fmaxf(0.15f, 1.0f - maxComponent);
+                    
+                    // Generate random sample
+                    thrust::uniform_real_distribution<float> u01(0, 1);
+                    float randomSample = u01(rng);
+                    
+                    if (randomSample < q) {
+                        // Terminate the path 
+                        pathSegment.remainingBounces = 0;
+                        return;
+                    } else {
+                        // Scale by 1/(1-q) 
+                        pathSegment.color /= (1.0f - q);
+                    }
+                }
+                
                 // Decrement remaining bounces
                 pathSegment.remainingBounces--;
                 
-                //// Terminate path if no more bounces
+                // Terminate path if no more bounces
                 if (pathSegment.remainingBounces <= 0) {
                     pathSegment.color = glm::vec3(0.0f);
                     return;
@@ -389,7 +414,7 @@ __global__ void shadeMaterial(
             }
         }
         else {
-            // No intersection - set color to background
+            // No intersection 
             pathSegment.color = glm::vec3(0.0f);
             pathSegment.remainingBounces = 0;
         }
@@ -445,6 +470,12 @@ void pathtrace(uchar4* pbo, int frame, int iter)
 
     ///////////////////////////////////////////////////////////////////////////
 
+    // Performance timing
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start);
+
     // Recap:
     // * Initialize array of path rays (using rays that come out of the camera)
     //   * You can pass the Camera object to that kernel.
@@ -481,6 +512,7 @@ void pathtrace(uchar4* pbo, int frame, int iter)
     int depth = 0;
     PathSegment* dev_path_end = dev_paths + pixelcount;
     int num_paths = dev_path_end - dev_paths;
+    int initial_paths = num_paths;
 
     // --- PathSegment Tracing Stage ---
     // Shoot ray into scene, bounce between objects, push shading chunks
@@ -536,18 +568,28 @@ void pathtrace(uchar4* pbo, int frame, int iter)
             num_paths,
             dev_intersections,
             dev_paths,
-            dev_materials
+            dev_materials,
+            depth,
+            guiData != NULL ? guiData->RussianRouletteEnabled : false
         );
         checkCUDAError("shade material");
         cudaDeviceSynchronize();
 
-        // TODO: Stream compaction to remove terminated paths
-        // For now, continue until max depth is reached
-        iterationComplete = (depth >= traceDepth);
+        // Stream compaction to remove terminated paths
+        PathSegment* new_end = thrust::partition(thrust::device, dev_paths, dev_paths + num_paths, 
+            [] __device__ (const PathSegment& path) {
+                return path.remainingBounces > 0;
+            });
+        num_paths = new_end - dev_paths;
+
+        // Continue until max depth is reached or no more active paths
+        iterationComplete = (depth >= traceDepth) || (num_paths == 0);
 
         if (guiData != NULL)
         {
             guiData->TracedDepth = depth;
+            guiData->ActivePaths = num_paths;
+            guiData->TotalPaths = initial_paths;
         }
     }
 
@@ -560,9 +602,24 @@ void pathtrace(uchar4* pbo, int frame, int iter)
     // Send results to OpenGL buffer for rendering
     sendImageToPBO<<<blocksPerGrid2d, blockSize2d>>>(pbo, cam.resolution, iter, dev_image);
 
+    // Stop timing and calculate performance metrics
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    
+    if (guiData != NULL)
+    {
+        guiData->RenderTimeMs = milliseconds;
+    }
+
     // Retrieve image from GPU
     cudaMemcpy(hst_scene->state.image.data(), dev_image,
         pixelcount * sizeof(glm::vec3), cudaMemcpyDeviceToHost);
+
+    // Clean up timing events
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
 
     checkCUDAError("pathtrace");
 }

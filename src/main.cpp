@@ -285,8 +285,11 @@ void RenderImGui()
     //ImGui::SameLine();
     //ImGui::Text("counter = %d", counter);
     ImGui::Text("Traced Depth %d", imguiData->TracedDepth);
+    ImGui::Text("Active Paths: %d / %d", imguiData->ActivePaths, imguiData->TotalPaths);
+    ImGui::Text("Render Time: %.2f ms", imguiData->RenderTimeMs);
     ImGui::Checkbox("Enable Material Sorting", &imguiData->MaterialSortingEnabled);
     ImGui::Checkbox("Enable Antialiasing", &imguiData->AntialiasingEnabled);
+    ImGui::Checkbox("Enable Russian Roulette", &imguiData->RussianRouletteEnabled);
     ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
     ImGui::End();
 
