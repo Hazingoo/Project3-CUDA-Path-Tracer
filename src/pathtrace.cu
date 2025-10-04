@@ -18,6 +18,10 @@
 
 #define ERRORCHECK 1
 
+#ifndef PI
+#define PI 3.14159265359f
+#endif
+
 #define FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #define checkCUDAError(msg) checkCUDAErrorFn(msg, FILENAME, __LINE__)
 void checkCUDAErrorFn(const char* msg, const char* file, int line)
@@ -162,27 +166,55 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
         int index = x + (y * cam.resolution.x);
         PathSegment& segment = pathSegments[index];
 
-        segment.ray.origin = cam.position;
         segment.color = glm::vec3(1.0f, 1.0f, 1.0f);
+
+        // Generate random numbers for antialiasing and depth of field
+        thrust::default_random_engine rng = makeSeededRandomEngine(iter, index, 0);
+        thrust::uniform_real_distribution<float> u01(0, 1);
 
         // Stochastic antialiasing by jittering the ray
         float jitter_x = 0.0f;
         float jitter_y = 0.0f;
         
         if (antialiasingEnabled) {
-            // Generate random numbers for jittering
-            thrust::default_random_engine rng = makeSeededRandomEngine(iter, index, 0);
-            thrust::uniform_real_distribution<float> u01(0, 1);
-            
             // Jitter within the pixel
             jitter_x = u01(rng) - 0.5f;
             jitter_y = u01(rng) - 0.5f;
         }
         
-        segment.ray.direction = glm::normalize(cam.view
-            - cam.right * cam.pixelLength.x * ((float)x + jitter_x - (float)cam.resolution.x * 0.5f)
-            - cam.up * cam.pixelLength.y * ((float)y + jitter_y - (float)cam.resolution.y * 0.5f)
-        );
+        // Compute the point on the image plane
+        glm::vec3 imagePoint = cam.position + cam.view * cam.focalDistance
+            - cam.right * cam.pixelLength.x * ((float)x + jitter_x - (float)cam.resolution.x * 0.5f) * cam.focalDistance
+            - cam.up * cam.pixelLength.y * ((float)y + jitter_y - (float)cam.resolution.y * 0.5f) * cam.focalDistance;
+
+        // Thin lens model for depth of field
+        if (cam.lensRadius > 0.0f) {
+            // Sample point on lens aperture using concentric disk sampling
+            float u1 = u01(rng);
+            float u2 = u01(rng);
+            
+            // Convert to polar coordinates
+            float r = cam.lensRadius * sqrtf(u1);
+            float theta = 2.0f * PI * u2;
+            
+            // Convert back to Cartesian coordinates on lens plane
+            glm::vec3 lensPoint = cam.position 
+                + cam.right * (r * cosf(theta))
+                + cam.up * (r * sinf(theta));
+            
+            // Ray origin is the sampled point on the lens
+            segment.ray.origin = lensPoint;
+            
+            // Ray direction points from lens to the image point
+            segment.ray.direction = glm::normalize(imagePoint - lensPoint);
+        } else {
+            // Pinhole camera model (no depth of field)
+            segment.ray.origin = cam.position;
+            segment.ray.direction = glm::normalize(cam.view
+                - cam.right * cam.pixelLength.x * ((float)x + jitter_x - (float)cam.resolution.x * 0.5f)
+                - cam.up * cam.pixelLength.y * ((float)y + jitter_y - (float)cam.resolution.y * 0.5f)
+            );
+        }
 
         segment.pixelIndex = index;
         segment.remainingBounces = traceDepth;
