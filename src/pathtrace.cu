@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cuda.h>
+#include <cuda_runtime.h>
 #include <cmath>
 #include <thrust/execution_policy.h>
 #include <thrust/random.h>
@@ -24,6 +25,10 @@ struct IsPathAlive {
 #include "intersections.h"
 #include "interactions.h"
 #include "env.h"
+#include "bvh.hpp"
+
+extern __device__ BVHNodeGPU* d_bvh_nodes;
+extern __device__ int* d_bvh_tri_indices;
 
 #define ERRORCHECK 1
 
@@ -33,6 +38,9 @@ struct IsPathAlive {
 
 // Russian Roulette parameters 
 #define RR_MIN_DEPTH 3
+
+// BVH toggle 
+#define USE_BVH true
 
 
 #define FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
@@ -102,6 +110,13 @@ static int* dev_material_sort_indices = NULL;
 static Vertex* dev_vertices = NULL;
 static Triangle* dev_triangles = NULL;
 static EnvironmentMap dev_env = {};
+static BVHNodeGPU* dev_bvh_nodes = NULL;
+static int* dev_bvh_tri_indices = NULL;
+
+// Device global definitions
+__device__ BVHNodeGPU* d_bvh_nodes;
+__device__ int* d_bvh_tri_indices;
+
 // Host copy mirrors device-global d_env; not read inside device code
 // TODO: static variables for device memory, any extra info you need, etc
 // ...
@@ -144,6 +159,45 @@ void pathtraceInit(Scene* scene)
         cudaMemcpy(dev_triangles, scene->triangles.data(), scene->triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice);
     }
 
+    // Upload BVH buffers if present 
+    if (!scene->bvhNodes.empty()) {
+        cudaMalloc(&dev_bvh_nodes, scene->bvhNodes.size() * sizeof(BVHNodeGPU));
+        cudaMemcpy(dev_bvh_nodes, scene->bvhNodes.data(), scene->bvhNodes.size() * sizeof(BVHNodeGPU), cudaMemcpyHostToDevice);
+        
+        // Calculate BVH statistics for debugging
+        int totalNodes = scene->bvhNodes.size();
+        int leafNodes = 0;
+        for (const auto& node : scene->bvhNodes) {
+            if (node.count > 0) { // leaf node
+                leafNodes++;
+            }
+        }
+        printf("=== BVH Statistics ===\n");
+        printf("Total BVH nodes: %d\n", totalNodes);
+        printf("Leaf nodes: %d\n", leafNodes);
+        printf("Internal nodes: %d\n", totalNodes - leafNodes);
+        printf("Total triangles: %zu\n", scene->triangles.size());
+        printf("BVH triangle indices: %zu\n", scene->bvhTriIndices.size());
+    }
+    if (!scene->bvhTriIndices.empty()) {
+        cudaMalloc(&dev_bvh_tri_indices, scene->bvhTriIndices.size() * sizeof(int));
+        cudaMemcpy(dev_bvh_tri_indices, scene->bvhTriIndices.data(), scene->bvhTriIndices.size() * sizeof(int), cudaMemcpyHostToDevice);
+    }
+    
+#if USE_BVH
+    printf("Using BVH acceleration \n");
+    if (scene->bvhNodes.empty()) {
+        printf("WARNING: BVH enabled but no BVH data found, will fall back to brute force\n");
+    }
+#else
+    printf("Using brute force intersection (BVH disabled)\n");
+#endif
+    printf("========================\n");
+
+    // Copy host pointers to device globals
+    cudaMemcpyToSymbol(d_bvh_nodes, &dev_bvh_nodes, sizeof(BVHNodeGPU*));
+    cudaMemcpyToSymbol(d_bvh_tri_indices, &dev_bvh_tri_indices, sizeof(int*));
+
     if (!scene->environmentHDR.empty()) {
         try {
             EnvImageHost img = loadHDR(scene->environmentHDR.c_str());
@@ -167,6 +221,8 @@ void pathtraceFree()
     cudaFree(dev_material_sort_indices);
     cudaFree(dev_vertices);
     cudaFree(dev_triangles);
+    cudaFree(dev_bvh_nodes);
+    cudaFree(dev_bvh_tri_indices);
     // Environment cleanup
     freeEnv(dev_env);
 
@@ -232,7 +288,7 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
             // Ray direction points from lens to the image point
             segment.ray.direction = glm::normalize(imagePoint - lensPoint);
         } else {
-            // Pinhole camera model (no depth of field)
+            // Pinhole camera model 
             segment.ray.origin = cam.position;
             segment.ray.direction = glm::normalize(cam.view
                 - cam.right * cam.pixelLength.x * ((float)x + jitter_x - (float)cam.resolution.x * 0.5f)
@@ -291,7 +347,7 @@ __global__ void computeIntersections(
             }
             else if (geom.type == MESH)
             {
-             
+                // Transform ray to object space
                 Ray q;
                 q.origin = multiplyMV(geom.inverseTransform, glm::vec4(pathSegment.ray.origin, 1.0f));
                 q.direction = glm::normalize(multiplyMV(geom.inverseTransform, glm::vec4(pathSegment.ray.direction, 0.0f)));
@@ -300,10 +356,118 @@ __global__ void computeIntersections(
                 glm::vec3 closestIntersect, closestNormal;
                 bool hit = false;
 
+#if USE_BVH
+                if (d_bvh_nodes != NULL && geom.bvhNodeCount > 0 && d_bvh_tri_indices != NULL) {
+                    // printf("Using BVH traversal for mesh %d\n", i);
+                    const int root = geom.bvhNodeOffset;
+                    int stack[64]; int sp = 0; stack[sp++] = root;
 
+                    auto slabHit = [&q, &closestT](const BVHNodeGPU& n, float& tEnter) {
+                        float3 bmin = n.bboxMin;
+                        float3 bmax = n.bboxMax;
+                        float3 ro = make_float3(q.origin.x, q.origin.y, q.origin.z);
+                        float3 rd = make_float3(q.direction.x, q.direction.y, q.direction.z);
+                        float3 invD = make_float3(1.0f / rd.x, 1.0f / rd.y, 1.0f / rd.z);
+                        
+                        // Calculate slab intersections for each axis
+                        float tx1 = (bmin.x - ro.x) * invD.x;
+                        float tx2 = (bmax.x - ro.x) * invD.x;
+                        float ty1 = (bmin.y - ro.y) * invD.y;
+                        float ty2 = (bmax.y - ro.y) * invD.y;
+                        float tz1 = (bmin.z - ro.z) * invD.z;
+                        float tz2 = (bmax.z - ro.z) * invD.z;
+                        
+                        // Find intersection interval
+                        float tmin = fmaxf(fmaxf(fminf(tx1, tx2), fminf(ty1, ty2)), fminf(tz1, tz2));
+                        float tmax = fminf(fminf(fmaxf(tx1, tx2), fmaxf(ty1, ty2)), fmaxf(tz1, tz2));
+                        
+                        tEnter = tmin;
+                        return tmax >= fmaxf(tmin, 0.0f) && tmin < closestT;
+                    };
+
+                    while (sp > 0) {
+                        int ni = stack[--sp];
+                        const BVHNodeGPU n = d_bvh_nodes[ni];
+                        float tEnter;
+                        if (!slabHit(n, tEnter)) continue;
+                        if (n.count > 0) {
+                            // Leaf node, test triangles
+                            int start = n.start;
+                            int end = n.start + n.count;
+                            for (int j = start; j < end; ++j) {
+                                int triIdx = d_bvh_tri_indices[geom.bvhTriIndexOffset + j];
+                                Triangle tri = triangles[triIdx];
+                                glm::vec3 tempIntersect;
+                                glm::vec3 tempNormal;
+                                float triT;
+                                
+                                if (triangleIntersectionTest(tri, vertices, q, tempIntersect, tempNormal, triT)) {
+                                    if (triT < closestT) {
+                                        closestT = triT;
+                                        hit = true;
+                                        closestIntersect = tempIntersect;
+                                        closestNormal = tempNormal;
+                                    }
+                                }
+                            }
+                        } else {
+                            // Interior node, push children, near first
+                            int li = n.left;
+                            int ri = n.right;
+                            float tL = 0.0f;
+                            float tR = 0.0f;
+                            bool hL = false;
+                            bool hR = false;
+                            
+                            if (li >= 0) {
+                                BVHNodeGPU ln = d_bvh_nodes[li];
+                                hL = slabHit(ln, tL);
+                            }
+                            if (ri >= 0) {
+                                BVHNodeGPU rn = d_bvh_nodes[ri];
+                                hR = slabHit(rn, tR);
+                            }
+                            if (hL && hR) {
+                                if (tL < tR) {
+                                    stack[sp++] = ri;
+                                    stack[sp++] = li;
+                                } else {
+                                    stack[sp++] = li;
+                                    stack[sp++] = ri;
+                                }
+                            } else if (hL) {
+                                stack[sp++] = li;
+                            } else if (hR) {
+                                stack[sp++] = ri;
+                            }
+                        }
+                    }
+                } else {
+                    // brute force the mesh triangles
+                    // printf("BVH fallback: Using brute force for mesh %d\n", i);
+                    for (int iTri = 0; iTri < geom.numTriangles; iTri++) {
+                        Triangle tri = triangles[geom.triangleOffset + iTri];
+                        glm::vec3 tempIntersect;
+                        glm::vec3 tempNormal;
+                        float triT;
+                        
+                        if (triangleIntersectionTest(tri, vertices, q, tempIntersect, tempNormal, triT)) {
+                            if (triT < closestT) {
+                                closestT = triT;
+                                hit = true;
+                                closestIntersect = tempIntersect;
+                                closestNormal = tempNormal;
+                            }
+                        }
+                    }
+                }
+#else
+                // brute force mesh intersection
+                // printf("Using brute force intersection for mesh %d (BVH disabled)\n", i);
                 for (int i = 0; i < geom.numTriangles; i++) {
                     Triangle tri = triangles[geom.triangleOffset + i];
-                    glm::vec3 tempIntersect, tempNormal;
+                    glm::vec3 tempIntersect;
+                    glm::vec3 tempNormal;
                     float triT;
                     
                     if (triangleIntersectionTest(tri, vertices, q, tempIntersect, tempNormal, triT)) {
@@ -315,12 +479,14 @@ __global__ void computeIntersections(
                         }
                     }
                 }
+#endif
 
                 if (hit) {
                     tmp_intersect = multiplyMV(geom.transform, glm::vec4(closestIntersect, 1.0f));
                     tmp_normal = glm::normalize(multiplyMV(geom.invTranspose, glm::vec4(closestNormal, 0.0f)));
                     t = glm::length(pathSegment.ray.origin - tmp_intersect);
                     outside = glm::dot(tmp_normal, pathSegment.ray.direction) < 0.0f;
+                    
                     if (!outside) {
                         tmp_normal = -tmp_normal;
                     }
@@ -330,8 +496,6 @@ __global__ void computeIntersections(
             }
             // TODO: add more intersection tests here... metaball? CSG?
 
-            // Compute the minimum t from the intersection tests to determine what
-            // scene geometry object was hit first.
             if (t > 0.0f && t_min > t)
             {
                 t_min = t;

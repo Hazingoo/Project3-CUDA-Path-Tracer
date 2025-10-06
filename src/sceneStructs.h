@@ -58,6 +58,11 @@ struct Geom
     int vertexOffset;   
     glm::vec3 bboxMin;  
     glm::vec3 bboxMax;  
+
+    int bvhNodeOffset = 0;
+    int bvhNodeCount = 0;
+    int bvhTriIndexOffset = 0;
+    int bvhTriIndexCount = 0;
 };
 
 struct Material
@@ -85,7 +90,6 @@ struct Camera
     glm::vec2 fov;
     glm::vec2 pixelLength;
     
-    // Depth of field parameters for thin lens model
     float lensRadius;
     float focalDistance;
 };

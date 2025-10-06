@@ -1,4 +1,5 @@
 #include "scene.h"
+#include "bvh.hpp"
 
 #include "utilities.h"
 
@@ -107,6 +108,34 @@ void Scene::loadFromJSON(const std::string& jsonName)
                 }
                 int materialId = MatNameToID[materialName];
                 loadOBJFile(objPath, materialId, translation, rotation, scaleVec);
+                // Build BVH for the newly loaded mesh range
+                Geom& mesh = geoms.back();
+                if (mesh.type == MESH && mesh.numTriangles > 0) {
+                    BuiltBVH b = buildMeshBVH(triangles, vertices, mesh.triangleOffset, mesh.numTriangles);
+                    
+                    // Calculate BVH statistics for this mesh
+                    int leafNodes = 0;
+                    for (const auto& node : b.nodes) {
+                        if (node.count > 0) { // leaf node
+                            leafNodes++;
+                        }
+                    }
+                    
+                    std::cout << "=== Mesh BVH Statistics ===" << std::endl;
+                    std::cout << "Mesh: " << objPath << std::endl;
+                    std::cout << "Triangles: " << mesh.numTriangles << std::endl;
+                    std::cout << "BVH nodes: " << b.nodes.size() << std::endl;
+                    std::cout << "Leaf nodes: " << leafNodes << std::endl;
+                    std::cout << "Internal nodes: " << (b.nodes.size() - leafNodes) << std::endl;
+                    std::cout << "=========================" << std::endl;
+                    
+                    mesh.bvhNodeOffset = (int)bvhNodes.size();
+                    mesh.bvhNodeCount = (int)b.nodes.size();
+                    mesh.bvhTriIndexOffset = (int)bvhTriIndices.size();
+                    mesh.bvhTriIndexCount = (int)b.triIndices.size();
+                    bvhNodes.insert(bvhNodes.end(), b.nodes.begin(), b.nodes.end());
+                    bvhTriIndices.insert(bvhTriIndices.end(), b.triIndices.begin(), b.triIndices.end());
+                }
             } else {
                 std::cerr << "OBJ object missing FILE parameter" << std::endl;
                 exit(-1);

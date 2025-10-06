@@ -19,4 +19,6 @@ public:
     std::vector<Triangle> triangles;
     RenderState state;
     std::string environmentHDR;
+    std::vector<struct BVHNodeGPU> bvhNodes;
+    std::vector<int> bvhTriIndices;
 };
