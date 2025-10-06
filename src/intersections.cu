@@ -1,4 +1,31 @@
 #include "intersections.h"
+__device__ bool visibleToInfinity(const glm::vec3& origin, const glm::vec3& dir,
+                                  const Geom* geoms, int geoms_size)
+{
+    Ray r; r.origin = origin + dir * 0.001f; r.direction = glm::normalize(dir);
+    glm::vec3 tmp_intersect, tmp_normal;
+    bool outside;
+    for (int i = 0; i < geoms_size; ++i){
+        const Geom& g = geoms[i];
+        float t = -1.0f;
+        if (g.type == CUBE) {
+            t = boxIntersectionTest((Geom&)g, r, tmp_intersect, tmp_normal, outside);
+        } else if (g.type == SPHERE) {
+            t = sphereIntersectionTest((Geom&)g, r, tmp_intersect, tmp_normal, outside);
+        } else if (g.type == MESH) {
+            glm::vec3 invD = 1.0f / r.direction;
+            glm::vec3 t0 = (g.bboxMin - r.origin) * invD;
+            glm::vec3 t1 = (g.bboxMax - r.origin) * invD;
+            glm::vec3 tmin = glm::min(t0, t1);
+            glm::vec3 tmax = glm::max(t0, t1);
+            float tEnter = fmaxf(fmaxf(tmin.x, tmin.y), tmin.z);
+            float tExit  = fminf(fminf(tmax.x, tmax.y), tmax.z);
+            if (tExit >= fmaxf(tEnter, 0.0f)) t = tEnter > 0.0f ? tEnter : tExit;
+        }
+        if (t > 0.0f) return false;
+    }
+    return true;
+}
 
 __host__ __device__ float boxIntersectionTest(
     Geom box,

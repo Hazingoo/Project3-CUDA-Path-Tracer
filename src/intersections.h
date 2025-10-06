@@ -30,6 +30,7 @@ __host__ __device__ inline glm::vec3 getPointOnRay(Ray r, float t)
     return r.origin + (t - .0001f) * glm::normalize(r.direction);
 }
 
+
 /**
  * Multiplies a mat4 and a vec4 and returns a vec3 clipped from the vec4.
  */
@@ -37,6 +38,9 @@ __host__ __device__ inline glm::vec3 multiplyMV(glm::mat4 m, glm::vec4 v)
 {
     return glm::vec3(m * v);
 }
+
+__device__ bool visibleToInfinity(const glm::vec3& origin, const glm::vec3& dir,
+                                  const Geom* geoms, int geoms_size);
 
 // CHECKITOUT
 /**

@@ -2,6 +2,7 @@
 
 #include "sceneStructs.h"
 #include <vector>
+#include <string>
 
 class Scene
 {
@@ -17,4 +18,5 @@ public:
     std::vector<Vertex> vertices;    
     std::vector<Triangle> triangles;
     RenderState state;
+    std::string environmentHDR;
 };

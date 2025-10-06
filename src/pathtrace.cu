@@ -7,6 +7,14 @@
 #include <thrust/random.h>
 #include <thrust/remove.h>
 #include <thrust/sort.h>
+#include <thrust/partition.h>
+#pragma region ThrustFunctors
+struct IsPathAlive {
+    __host__ __device__ bool operator()(const PathSegment& p) const {
+        return p.remainingBounces > 0;
+    }
+};
+#pragma endregion
 
 #include "sceneStructs.h"
 #include "scene.h"
@@ -15,6 +23,7 @@
 #include "utilities.h"
 #include "intersections.h"
 #include "interactions.h"
+#include "env.h"
 
 #define ERRORCHECK 1
 
@@ -92,6 +101,8 @@ static ShadeableIntersection* dev_intersections = NULL;
 static int* dev_material_sort_indices = NULL;
 static Vertex* dev_vertices = NULL;
 static Triangle* dev_triangles = NULL;
+static EnvironmentMap dev_env = {};
+// Host copy mirrors device-global d_env; not read inside device code
 // TODO: static variables for device memory, any extra info you need, etc
 // ...
 
@@ -133,7 +144,15 @@ void pathtraceInit(Scene* scene)
         cudaMemcpy(dev_triangles, scene->triangles.data(), scene->triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice);
     }
 
-    // TODO: initialize any extra device memeory you need
+    if (!scene->environmentHDR.empty()) {
+        try {
+            EnvImageHost img = loadHDR(scene->environmentHDR.c_str());
+            EnvAliasHost alias = buildEnvAlias(img.texels.data(), img.width, img.height);
+            uploadEnv(img, alias, dev_env);
+            cudaMemcpyToSymbol(d_env, &dev_env, sizeof(EnvironmentMap));
+        } catch (const std::exception&){
+        }
+    }
 
     checkCUDAError("pathtraceInit");
 }
@@ -148,7 +167,8 @@ void pathtraceFree()
     cudaFree(dev_material_sort_indices);
     cudaFree(dev_vertices);
     cudaFree(dev_triangles);
-    // TODO: clean up any extra device memory you created
+    // Environment cleanup
+    freeEnv(dev_env);
 
     checkCUDAError("pathtraceFree");
 }
@@ -352,7 +372,10 @@ __global__ void shadeMaterial(
     PathSegment* pathSegments,
     Material* materials,
     int currentDepth,
-    bool russianRouletteEnabled)
+    bool russianRouletteEnabled,
+    Geom* geoms,
+    int geoms_size,
+    glm::vec3* image)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < num_paths)
@@ -372,15 +395,18 @@ __global__ void shadeMaterial(
             
             Material material = materials[intersection.materialId];
             
-            // If the material indicates that the object was a light, light the ray
             if (material.emittance > 0.0f) {
-                pathSegment.color *= (material.color * material.emittance);
+                glm::vec3 contrib = pathSegment.color * (material.color * material.emittance);
+                atomicAdd(&image[pathSegment.pixelIndex].x, contrib.x);
+                atomicAdd(&image[pathSegment.pixelIndex].y, contrib.y);
+                atomicAdd(&image[pathSegment.pixelIndex].z, contrib.z);
                 pathSegment.remainingBounces = 0; // terminate path at light source
             }
             else {
                 // Calculate intersection point
                 glm::vec3 intersectPoint = getPointOnRay(pathSegment.ray, intersection.t);
-                
+
+
                 // Scatter the ray using BSDF evaluation
                 scatterRay(pathSegment, intersectPoint, intersection.surfaceNormal, material, rng);
                 
@@ -414,8 +440,16 @@ __global__ void shadeMaterial(
             }
         }
         else {
-            // No intersection 
-            pathSegment.color = glm::vec3(0.0f);
+            // No intersection -> environment miss shading
+            if (d_env.texture != 0) {
+                float u, v;
+                dirToUV(pathSegment.ray.direction, u, v);
+                glm::vec3 Le = envTex(d_env.texture, u, v);
+                glm::vec3 contrib = pathSegment.color * Le;
+                atomicAdd(&image[pathSegment.pixelIndex].x, contrib.x);
+                atomicAdd(&image[pathSegment.pixelIndex].y, contrib.y);
+                atomicAdd(&image[pathSegment.pixelIndex].z, contrib.z);
+            }
             pathSegment.remainingBounces = 0;
         }
     }
@@ -437,16 +471,8 @@ __global__ void prepareMaterialSortIndices(
     }
 }
 
-// Add the current iteration's output to the overall image
 __global__ void finalGather(int nPaths, glm::vec3* image, PathSegment* iterationPaths)
 {
-    int index = (blockIdx.x * blockDim.x) + threadIdx.x;
-
-    if (index < nPaths)
-    {
-        PathSegment iterationPath = iterationPaths[index];
-        image[iterationPath.pixelIndex] += iterationPath.color;
-    }
 }
 
 /**
@@ -570,16 +596,16 @@ void pathtrace(uchar4* pbo, int frame, int iter)
             dev_paths,
             dev_materials,
             depth,
-            guiData != NULL ? guiData->RussianRouletteEnabled : false
+            guiData != NULL ? guiData->RussianRouletteEnabled : false,
+            dev_geoms,
+            hst_scene->geoms.size(),
+            dev_image
         );
         checkCUDAError("shade material");
         cudaDeviceSynchronize();
 
         // Stream compaction to remove terminated paths
-        PathSegment* new_end = thrust::partition(thrust::device, dev_paths, dev_paths + num_paths, 
-            [] __device__ (const PathSegment& path) {
-                return path.remainingBounces > 0;
-            });
+        PathSegment* new_end = thrust::partition(thrust::device, dev_paths, dev_paths + num_paths, IsPathAlive());
         num_paths = new_end - dev_paths;
 
         // Continue until max depth is reached or no more active paths

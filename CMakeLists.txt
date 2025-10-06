@@ -54,6 +54,7 @@ set(headers
     src/intersections.h
     src/glslUtility.hpp
     src/pathtrace.h
+    src/env.h
     src/scene.h
     src/sceneStructs.h
     src/utilities.h
@@ -69,6 +70,8 @@ set(sources
     src/interactions.cu
     src/scene.cpp
     src/utilities.cpp
+    src/env.cpp
+    src/env_device.cu
 )
 
 set(imgui_headers

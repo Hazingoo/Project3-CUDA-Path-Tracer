@@ -1,4 +1,5 @@
 #include "interactions.h"
+#include "env.h"
 
 #include "utilities.h"
 
