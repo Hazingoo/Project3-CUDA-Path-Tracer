@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sceneStructs.h"
+#include "texture.h"
 #include <vector>
 #include <string>
 
@@ -17,6 +18,7 @@ public:
     std::vector<Material> materials;
     std::vector<Vertex> vertices;    
     std::vector<Triangle> triangles;
+    std::vector<TextureData> textures;  
     RenderState state;
     std::string environmentHDR;
     std::vector<struct BVHNodeGPU> bvhNodes;

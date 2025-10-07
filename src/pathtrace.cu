@@ -26,6 +26,7 @@ struct IsPathAlive {
 #include "interactions.h"
 #include "env.h"
 #include "bvh.hpp"
+#include "texture.h"
 
 extern __device__ BVHNodeGPU* d_bvh_nodes;
 extern __device__ int* d_bvh_tri_indices;
@@ -112,6 +113,7 @@ static Triangle* dev_triangles = NULL;
 static EnvironmentMap dev_env = {};
 static BVHNodeGPU* dev_bvh_nodes = NULL;
 static int* dev_bvh_tri_indices = NULL;
+static cudaTextureObject_t* dev_textures = NULL;  // Array of texture objects for materials
 
 // Device global definitions
 __device__ BVHNodeGPU* d_bvh_nodes;
@@ -207,13 +209,42 @@ void pathtraceInit(Scene* scene)
         } catch (const std::exception&){
         }
     }
+    if (!scene->textures.empty()) {
+        std::vector<cudaTextureObject_t> texObjs;
+        texObjs.reserve(scene->textures.size());
+        
+        for (auto& tex : scene->textures) {
+            if (!tex.filepath.empty() && tex.texObj == 0) {
+                try {
+                    ImageHost img = loadImage(tex.filepath.c_str());
+                    
+                } catch (const std::exception& e) {
+                    tex.texObj = 0;
+                }
+            }
+            
+            if (tex.texObj != 0) {
+                texObjs.push_back(tex.texObj);
+            }
+        }
+        
+        // Upload texture object array to GPU
+        if (!texObjs.empty()) {
+            cudaMalloc(&dev_textures, texObjs.size() * sizeof(cudaTextureObject_t));
+            cudaMemcpy(dev_textures, texObjs.data(), texObjs.size() * sizeof(cudaTextureObject_t), cudaMemcpyHostToDevice);
+        } else {
+            dev_textures = nullptr;
+        }
+    }
 
     checkCUDAError("pathtraceInit");
 }
 
 void pathtraceFree()
 {
-    cudaFree(dev_image);  // no-op if dev_image is null
+    cudaDeviceSynchronize();
+    
+    cudaFree(dev_image); 
     cudaFree(dev_paths);
     cudaFree(dev_geoms);
     cudaFree(dev_materials);
@@ -223,10 +254,17 @@ void pathtraceFree()
     cudaFree(dev_triangles);
     cudaFree(dev_bvh_nodes);
     cudaFree(dev_bvh_tri_indices);
-    // Environment cleanup
+    cudaFree(dev_textures);
+    
     freeEnv(dev_env);
+    
+    if (hst_scene) {
+        for (auto& tex : hst_scene->textures) {
+            freeTexture(tex);
+        }
+    }
 
-    checkCUDAError("pathtraceFree");
+    // checkCUDAError("pathtraceFree");
 }
 
 /**
@@ -324,12 +362,14 @@ __global__ void computeIntersections(
         float t;
         glm::vec3 intersect_point;
         glm::vec3 normal;
+        glm::vec2 uv;
         float t_min = FLT_MAX;
         int hit_geom_index = -1;
         bool outside = true;
 
         glm::vec3 tmp_intersect;
         glm::vec3 tmp_normal;
+        glm::vec2 tmp_uv;
 
         // naive parse through global geoms
 
@@ -354,6 +394,7 @@ __global__ void computeIntersections(
 
                 float closestT = FLT_MAX;
                 glm::vec3 closestIntersect, closestNormal;
+                glm::vec2 closestUV;
                 bool hit = false;
 
 #if USE_BVH
@@ -399,14 +440,16 @@ __global__ void computeIntersections(
                                 Triangle tri = triangles[triIdx];
                                 glm::vec3 tempIntersect;
                                 glm::vec3 tempNormal;
+                                glm::vec2 tempUV;
                                 float triT;
                                 
-                                if (triangleIntersectionTest(tri, vertices, q, tempIntersect, tempNormal, triT)) {
+                                if (triangleIntersectionTest(tri, vertices, q, tempIntersect, tempNormal, tempUV, triT)) {
                                     if (triT < closestT) {
                                         closestT = triT;
                                         hit = true;
                                         closestIntersect = tempIntersect;
                                         closestNormal = tempNormal;
+                                        closestUV = tempUV;
                                     }
                                 }
                             }
@@ -449,14 +492,16 @@ __global__ void computeIntersections(
                         Triangle tri = triangles[geom.triangleOffset + iTri];
                         glm::vec3 tempIntersect;
                         glm::vec3 tempNormal;
+                        glm::vec2 tempUV;
                         float triT;
                         
-                        if (triangleIntersectionTest(tri, vertices, q, tempIntersect, tempNormal, triT)) {
+                        if (triangleIntersectionTest(tri, vertices, q, tempIntersect, tempNormal, tempUV, triT)) {
                             if (triT < closestT) {
                                 closestT = triT;
                                 hit = true;
                                 closestIntersect = tempIntersect;
                                 closestNormal = tempNormal;
+                                closestUV = tempUV;
                             }
                         }
                     }
@@ -468,14 +513,16 @@ __global__ void computeIntersections(
                     Triangle tri = triangles[geom.triangleOffset + i];
                     glm::vec3 tempIntersect;
                     glm::vec3 tempNormal;
+                    glm::vec2 tempUV;
                     float triT;
                     
-                    if (triangleIntersectionTest(tri, vertices, q, tempIntersect, tempNormal, triT)) {
+                    if (triangleIntersectionTest(tri, vertices, q, tempIntersect, tempNormal, tempUV, triT)) {
                         if (triT < closestT) {
                             closestT = triT;
                             hit = true;
                             closestIntersect = tempIntersect;
                             closestNormal = tempNormal;
+                            closestUV = tempUV;
                         }
                     }
                 }
@@ -484,6 +531,7 @@ __global__ void computeIntersections(
                 if (hit) {
                     tmp_intersect = multiplyMV(geom.transform, glm::vec4(closestIntersect, 1.0f));
                     tmp_normal = glm::normalize(multiplyMV(geom.invTranspose, glm::vec4(closestNormal, 0.0f)));
+                    tmp_uv = closestUV;
                     t = glm::length(pathSegment.ray.origin - tmp_intersect);
                     outside = glm::dot(tmp_normal, pathSegment.ray.direction) < 0.0f;
                     
@@ -502,6 +550,7 @@ __global__ void computeIntersections(
                 hit_geom_index = i;
                 intersect_point = tmp_intersect;
                 normal = tmp_normal;
+                uv = tmp_uv;
             }
         }
 
@@ -515,6 +564,7 @@ __global__ void computeIntersections(
             intersections[path_index].t = t_min;
             intersections[path_index].materialId = geoms[hit_geom_index].materialid;
             intersections[path_index].surfaceNormal = normal;
+            intersections[path_index].uv = uv;
         }
     }
 }
@@ -535,6 +585,7 @@ __global__ void shadeMaterial(
     ShadeableIntersection* shadeableIntersections,
     PathSegment* pathSegments,
     Material* materials,
+    cudaTextureObject_t* textures,
     int currentDepth,
     bool russianRouletteEnabled,
     Geom* geoms,
@@ -559,8 +610,17 @@ __global__ void shadeMaterial(
             
             Material material = materials[intersection.materialId];
             
+            glm::vec3 baseColor = material.color;
+            if (material.hasTexture && material.textureID >= 0 && textures != nullptr) {
+                cudaTextureObject_t texObj = textures[material.textureID];
+                if (texObj != 0) {
+                    glm::vec3 texColor = sampleTexture(texObj, intersection.uv);
+                    baseColor *= texColor;
+                }
+            }
+            
             if (material.emittance > 0.0f) {
-                glm::vec3 contrib = pathSegment.color * (material.color * material.emittance);
+                glm::vec3 contrib = pathSegment.color * (baseColor * material.emittance);
                 atomicAdd(&image[pathSegment.pixelIndex].x, contrib.x);
                 atomicAdd(&image[pathSegment.pixelIndex].y, contrib.y);
                 atomicAdd(&image[pathSegment.pixelIndex].z, contrib.z);
@@ -570,9 +630,11 @@ __global__ void shadeMaterial(
                 // Calculate intersection point
                 glm::vec3 intersectPoint = getPointOnRay(pathSegment.ray, intersection.t);
 
+                Material shadingMaterial = material;
+                shadingMaterial.color = baseColor;
 
                 // Scatter the ray using BSDF evaluation
-                scatterRay(pathSegment, intersectPoint, intersection.surfaceNormal, material, rng);
+                scatterRay(pathSegment, intersectPoint, intersection.surfaceNormal, shadingMaterial, rng);
                 
                 // Russian Roulette 
                 if (russianRouletteEnabled && currentDepth >= RR_MIN_DEPTH) {
@@ -759,6 +821,7 @@ void pathtrace(uchar4* pbo, int frame, int iter)
             dev_intersections,
             dev_paths,
             dev_materials,
+            dev_textures,
             depth,
             guiData != NULL ? guiData->RussianRouletteEnabled : false,
             dev_geoms,

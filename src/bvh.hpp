@@ -9,19 +9,17 @@
 struct BVHNodeGPU {
     float3 bboxMin;
     float3 bboxMax;
-    int left;   // index of left child or -1
-    int right;  // index of right child or -1
-    int start;  // start index into triangle index array
-    int count;  // number of triangles if leaf; 0 for interior
+    int left;   
+    int right; 
+    int start; 
+    int count;  
 };
 
 struct BuiltBVH {
     std::vector<BVHNodeGPU> nodes;
-    std::vector<int> triIndices; // reordered triangle indices (into Scene::triangles)
+    std::vector<int> triIndices; 
 };
 
-// Build a per-mesh BVH over triangles in [triOffset, triOffset+triCount)
-// Triangles and vertices are in the mesh's object space (as stored in Scene).
 BuiltBVH buildMeshBVH(const std::vector<Triangle>& triangles,
                       const std::vector<Vertex>& vertices,
                       int triOffset,

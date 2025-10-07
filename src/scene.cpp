@@ -1,5 +1,6 @@
 #include "scene.h"
 #include "bvh.hpp"
+#include "texture.h"
 
 #include "utilities.h"
 
@@ -15,6 +16,7 @@
 #include <string>
 #include <unordered_map>
 #include <algorithm>
+#include <map>
 
 using namespace std;
 using json = nlohmann::json;
@@ -42,6 +44,8 @@ void Scene::loadFromJSON(const std::string& jsonName)
     json data = json::parse(f);
     const auto& materialsData = data["Materials"];
     std::unordered_map<std::string, uint32_t> MatNameToID;
+    std::map<std::string, int> texturePathToID;  
+    
     for (const auto& item : materialsData.items())
     {
         const auto& name = item.key();
@@ -54,6 +58,8 @@ void Scene::loadFromJSON(const std::string& jsonName)
         newMaterial.hasRefractive = 0.0f;
         newMaterial.indexOfRefraction = 1.0f;
         newMaterial.emittance = 0.0f;
+        newMaterial.textureID = -1;
+        newMaterial.hasTexture = 0;
         
         // TODO: handle materials loading differently
         if (p["TYPE"] == "Diffuse")
@@ -82,6 +88,37 @@ void Scene::loadFromJSON(const std::string& jsonName)
             std::cout << "Loaded Glass material: IOR=" << newMaterial.indexOfRefraction 
                       << ", Color=(" << newMaterial.color.x << ", " << newMaterial.color.y << ", " << newMaterial.color.z << ")" << std::endl;
         }
+        
+        if (p.contains("TEXTURE")) {
+            std::string texturePath = p["TEXTURE"];
+            
+            if (texturePathToID.find(texturePath) != texturePathToID.end()) {
+                newMaterial.textureID = texturePathToID[texturePath];
+                newMaterial.hasTexture = 1;
+            } else {
+                try {
+                    TextureData texData;
+                    texData.filepath = texturePath;
+                    texData.texObj = 0; 
+                    texData.array = nullptr;
+                    texData.width = 0;
+                    texData.height = 0;
+                    
+                    int texID = textures.size();
+                    textures.push_back(texData);
+                    texturePathToID[texturePath] = texID;
+                    
+                    newMaterial.textureID = texID;
+                    newMaterial.hasTexture = 1;
+                    
+                } catch (const std::exception& e) {
+                    std::cerr << "Failed to register texture '" << texturePath << "' for material '" << name << "': " << e.what() << std::endl;
+                    newMaterial.textureID = -1;
+                    newMaterial.hasTexture = 0;
+                }
+            }
+        }
+        
         MatNameToID[name] = materials.size();
         materials.emplace_back(newMaterial);
     }
@@ -248,7 +285,7 @@ void Scene::loadOBJFile(const std::string& objPath, int materialId, const glm::v
                 }
             }
         } else {
-            std::cerr << "File exists but TinyObj couldn't parse it. Check OBJ format." << std::endl;
+            std::cerr << "File exists but TinyObj couldn't parse it" << std::endl;
         }
         return; 
     }
@@ -271,33 +308,64 @@ void Scene::loadOBJFile(const std::string& objPath, int materialId, const glm::v
     int vertexOffset = vertices.size();
     int triangleOffset = triangles.size();
     
-    // Process vertices
+
     std::vector<Vertex> meshVertices;
-    for (size_t i = 0; i < attrib.vertices.size() / 3; i++) {
-        glm::vec3 pos(
-            attrib.vertices[3 * i + 0],
-            attrib.vertices[3 * i + 1],
-            attrib.vertices[3 * i + 2]
-        );
-        
-        // Keep vertices in object space n
-        // glm::vec4 transformedPos = transform * glm::vec4(pos, 1.0f);
-        // pos = glm::vec3(transformedPos);
-        
-        glm::vec3 normal(0.0f, 1.0f, 0.0f);
-        if (i < attrib.normals.size() / 3) {
-            normal = glm::vec3(
-                attrib.normals[3 * i + 0],
-                attrib.normals[3 * i + 1],
-                attrib.normals[3 * i + 2]
-            );
-            // Keep normals in object space
-            // glm::vec4 transformedNormal = invTranspose * glm::vec4(normal, 0.0f);
-            // normal = glm::normalize(glm::vec3(transformedNormal));
+    
+    // First, create a map to track unique vertex combinations (
+    std::map<std::tuple<int, int, int>, int> vertexMap;
+    std::vector<int> faceVertexIndices;
+    
+    for (const auto& shape : shapes) {
+        for (size_t i = 0; i < shape.mesh.indices.size(); i++) {
+            const auto& idx = shape.mesh.indices[i];
+            
+            int posIdx = idx.vertex_index;
+            int normalIdx = idx.normal_index;
+            int uvIdx = idx.texcoord_index;
+            
+            auto key = std::make_tuple(posIdx, normalIdx, uvIdx);
+            
+            // Check if we've seen this exact vertex combination before
+            if (vertexMap.find(key) == vertexMap.end()) {
+                // New unique vertex
+                glm::vec3 pos(0.0f);
+                if (posIdx >= 0 && posIdx < attrib.vertices.size() / 3) {
+                    pos = glm::vec3(
+                        attrib.vertices[3 * posIdx + 0],
+                        attrib.vertices[3 * posIdx + 1],
+                        attrib.vertices[3 * posIdx + 2]
+                    );
+                }
+                
+                glm::vec3 normal(0.0f, 1.0f, 0.0f);
+                if (normalIdx >= 0 && normalIdx < attrib.normals.size() / 3) {
+                    normal = glm::vec3(
+                        attrib.normals[3 * normalIdx + 0],
+                        attrib.normals[3 * normalIdx + 1],
+                        attrib.normals[3 * normalIdx + 2]
+                    );
+                }
+                
+                glm::vec2 uv(0.0f, 0.0f);
+                if (uvIdx >= 0 && uvIdx < attrib.texcoords.size() / 2) {
+                    uv = glm::vec2(
+                        attrib.texcoords[2 * uvIdx + 0],
+                        attrib.texcoords[2 * uvIdx + 1]
+                    );
+                }
+                
+                int newIdx = meshVertices.size();
+                meshVertices.push_back(Vertex(pos, normal, uv));
+                vertexMap[key] = newIdx;
+                faceVertexIndices.push_back(newIdx);
+            } else {
+                // Reuse existing vertex
+                faceVertexIndices.push_back(vertexMap[key]);
+            }
         }
-        
-        meshVertices.push_back(Vertex(pos, normal));
     }
+    
+    std::cout << "  Loaded " << meshVertices.size() << " unique vertices with UV coordinates" << std::endl;
     
     // Add vertices to global array
     vertices.insert(vertices.end(), meshVertices.begin(), meshVertices.end());
@@ -318,17 +386,16 @@ void Scene::loadOBJFile(const std::string& objPath, int materialId, const glm::v
 
     // Process triangles
     int numTriangles = 0;
-    for (const auto& shape : shapes) {
-        for (size_t i = 0; i < shape.mesh.indices.size(); i += 3) {
-            Triangle tri;
-            tri.idx_v0 = vertexOffset + shape.mesh.indices[i + 0].vertex_index;
-            tri.idx_v1 = vertexOffset + shape.mesh.indices[i + 1].vertex_index;
-            tri.idx_v2 = vertexOffset + shape.mesh.indices[i + 2].vertex_index;
-            tri.materialId = materialId;
-            triangles.push_back(tri);
-            numTriangles++;
-        }
+    for (size_t i = 0; i < faceVertexIndices.size(); i += 3) {
+        Triangle tri;
+        tri.idx_v0 = vertexOffset + faceVertexIndices[i + 0];
+        tri.idx_v1 = vertexOffset + faceVertexIndices[i + 1];
+        tri.idx_v2 = vertexOffset + faceVertexIndices[i + 2];
+        tri.materialId = materialId;
+        triangles.push_back(tri);
+        numTriangles++;
     }
+    
 
     // Create mesh geometry
     Geom meshGeom;

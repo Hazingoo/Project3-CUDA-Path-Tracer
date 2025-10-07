@@ -26,9 +26,11 @@ struct Vertex
 {
     glm::vec3 pos;
     glm::vec3 nor;
+    glm::vec2 uv;
     
-    __host__ __device__ Vertex() {}
-    __host__ __device__ Vertex(glm::vec3 p, glm::vec3 n) : pos(p), nor(n) {}
+    __host__ __device__ Vertex() : uv(0.0f, 0.0f) {}
+    __host__ __device__ Vertex(glm::vec3 p, glm::vec3 n) : pos(p), nor(n), uv(0.0f, 0.0f) {}
+    __host__ __device__ Vertex(glm::vec3 p, glm::vec3 n, glm::vec2 t) : pos(p), nor(n), uv(t) {}
 };
 
 struct Triangle
@@ -77,6 +79,9 @@ struct Material
     float hasRefractive;
     float indexOfRefraction;
     float emittance;
+    
+    int textureID;           
+    int hasTexture;          
 };
 
 struct Camera
@@ -119,4 +124,5 @@ struct ShadeableIntersection
   float t;
   glm::vec3 surfaceNormal;
   int materialId;
+  glm::vec2 uv;  
 };

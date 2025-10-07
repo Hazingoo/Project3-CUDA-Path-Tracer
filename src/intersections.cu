@@ -145,6 +145,7 @@ __host__ __device__ bool triangleIntersectionTest(
     Ray r,
     glm::vec3 &intersectionPoint,
     glm::vec3 &normal,
+    glm::vec2 &uv,
     float &t)
 {
     // Get triangle vertices using indices
@@ -187,6 +188,11 @@ __host__ __device__ bool triangleIntersectionTest(
         normal = glm::normalize(w * vertices[triangle.idx_v0].nor + 
                                u * vertices[triangle.idx_v1].nor + 
                                v * vertices[triangle.idx_v2].nor);
+        
+        // Interpolate UV coordinates using barycentric coordinates
+        uv = w * vertices[triangle.idx_v0].uv + 
+             u * vertices[triangle.idx_v1].uv + 
+             v * vertices[triangle.idx_v2].uv;
         
         return true;
     }
