@@ -86,11 +86,22 @@ __global__ void sendImageToPBO(uchar4* pbo, glm::ivec2 resolution, int iter, glm
     {
         int index = x + (y * resolution.x);
         glm::vec3 pix = image[index];
-
+        
+        glm::vec3 avgColor = pix / (float)iter;
+        float exposure = 4.0f;  
+        avgColor *= exposure;
+        
+        glm::vec3 toneMapped = avgColor / (glm::vec3(1.0f) + avgColor);
+        
+        auto gammaCorrect = [](float c) {
+            return c <= 0.0031308f ? 12.92f * c : 1.055f * powf(c, 1.0f/2.4f) - 0.055f;
+        };
+        toneMapped = glm::vec3(gammaCorrect(toneMapped.x), gammaCorrect(toneMapped.y), gammaCorrect(toneMapped.z));
+        
         glm::ivec3 color;
-        color.x = glm::clamp((int)(pix.x / iter * 255.0), 0, 255);
-        color.y = glm::clamp((int)(pix.y / iter * 255.0), 0, 255);
-        color.z = glm::clamp((int)(pix.z / iter * 255.0), 0, 255);
+        color.x = glm::clamp((int)(toneMapped.x * 255.0f), 0, 255);
+        color.y = glm::clamp((int)(toneMapped.y * 255.0f), 0, 255);
+        color.z = glm::clamp((int)(toneMapped.z * 255.0f), 0, 255);
 
         // Each thread writes one pixel location in the texture (textel)
         pbo[index].w = 0;
@@ -114,6 +125,19 @@ static EnvironmentMap dev_env = {};
 static BVHNodeGPU* dev_bvh_nodes = NULL;
 static int* dev_bvh_tri_indices = NULL;
 static cudaTextureObject_t* dev_textures = NULL;  // Array of texture objects for materials
+
+__device__ inline float luminance(const glm::vec3& c) {
+    return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+}
+
+__device__ inline glm::vec3 clampLuminance(const glm::vec3& c, float maxL) {
+    float L = luminance(c);
+    if (L > maxL) {
+        float s = maxL / fmaxf(L, 1e-6f);
+        return c * s;
+    }
+    return c;
+}
 
 // Device global definitions
 __device__ BVHNodeGPU* d_bvh_nodes;
@@ -217,8 +241,9 @@ void pathtraceInit(Scene* scene)
             if (!tex.filepath.empty() && tex.texObj == 0) {
                 try {
                     ImageHost img = loadImage(tex.filepath.c_str());
-                    
+                    uploadTexture(img, tex);  
                 } catch (const std::exception& e) {
+                    std::cerr << "Failed to load/upload texture: " << tex.filepath << " - " << e.what() << std::endl;
                     tex.texObj = 0;
                 }
             }
@@ -232,6 +257,7 @@ void pathtraceInit(Scene* scene)
         if (!texObjs.empty()) {
             cudaMalloc(&dev_textures, texObjs.size() * sizeof(cudaTextureObject_t));
             cudaMemcpy(dev_textures, texObjs.data(), texObjs.size() * sizeof(cudaTextureObject_t), cudaMemcpyHostToDevice);
+            std::cout << "Uploaded " << texObjs.size() << " texture to GPU for rendering" << std::endl;
         } else {
             dev_textures = nullptr;
         }
@@ -365,11 +391,13 @@ __global__ void computeIntersections(
         glm::vec2 uv;
         float t_min = FLT_MAX;
         int hit_geom_index = -1;
+        int hit_material_id = -1;
         bool outside = true;
 
         glm::vec3 tmp_intersect;
         glm::vec3 tmp_normal;
         glm::vec2 tmp_uv;
+        int tmp_material_id = -1;
 
         // naive parse through global geoms
 
@@ -380,10 +408,12 @@ __global__ void computeIntersections(
             if (geom.type == CUBE)
             {
                 t = boxIntersectionTest(geom, pathSegment.ray, tmp_intersect, tmp_normal, outside);
+                tmp_material_id = geom.materialid;
             }
             else if (geom.type == SPHERE)
             {
                 t = sphereIntersectionTest(geom, pathSegment.ray, tmp_intersect, tmp_normal, outside);
+                tmp_material_id = geom.materialid;
             }
             else if (geom.type == MESH)
             {
@@ -395,6 +425,7 @@ __global__ void computeIntersections(
                 float closestT = FLT_MAX;
                 glm::vec3 closestIntersect, closestNormal;
                 glm::vec2 closestUV;
+                int closestMaterialId = geom.materialid;
                 bool hit = false;
 
 #if USE_BVH
@@ -450,6 +481,7 @@ __global__ void computeIntersections(
                                         closestIntersect = tempIntersect;
                                         closestNormal = tempNormal;
                                         closestUV = tempUV;
+                                        closestMaterialId = tri.materialId;
                                     }
                                 }
                             }
@@ -502,6 +534,7 @@ __global__ void computeIntersections(
                                 closestIntersect = tempIntersect;
                                 closestNormal = tempNormal;
                                 closestUV = tempUV;
+                                closestMaterialId = tri.materialId;
                             }
                         }
                     }
@@ -523,6 +556,7 @@ __global__ void computeIntersections(
                             closestIntersect = tempIntersect;
                             closestNormal = tempNormal;
                             closestUV = tempUV;
+                            closestMaterialId = tri.materialId;
                         }
                     }
                 }
@@ -532,6 +566,7 @@ __global__ void computeIntersections(
                     tmp_intersect = multiplyMV(geom.transform, glm::vec4(closestIntersect, 1.0f));
                     tmp_normal = glm::normalize(multiplyMV(geom.invTranspose, glm::vec4(closestNormal, 0.0f)));
                     tmp_uv = closestUV;
+                    tmp_material_id = closestMaterialId;
                     t = glm::length(pathSegment.ray.origin - tmp_intersect);
                     outside = glm::dot(tmp_normal, pathSegment.ray.direction) < 0.0f;
                     
@@ -551,6 +586,7 @@ __global__ void computeIntersections(
                 intersect_point = tmp_intersect;
                 normal = tmp_normal;
                 uv = tmp_uv;
+                hit_material_id = tmp_material_id;
             }
         }
 
@@ -562,7 +598,7 @@ __global__ void computeIntersections(
         {
             // The ray hits something
             intersections[path_index].t = t_min;
-            intersections[path_index].materialId = geoms[hit_geom_index].materialid;
+            intersections[path_index].materialId = hit_material_id;
             intersections[path_index].surfaceNormal = normal;
             intersections[path_index].uv = uv;
         }
@@ -614,20 +650,42 @@ __global__ void shadeMaterial(
             if (material.hasTexture && material.textureID >= 0 && textures != nullptr) {
                 cudaTextureObject_t texObj = textures[material.textureID];
                 if (texObj != 0) {
-                    glm::vec3 texColor = sampleTexture(texObj, intersection.uv);
+                    float4 texSample = tex2D<float4>(texObj, intersection.uv.x, intersection.uv.y);
+                    
+                    if (texSample.w < 0.5f) {
+                        if (d_env.texture != 0) {
+                            float u, v; dirToUV(pathSegment.ray.direction, u, v);
+                            glm::vec3 Le = envTex(d_env.texture, u, v) * 2.0f;
+                            glm::vec3 contrib = clampLuminance(pathSegment.color * Le, 20.0f);
+                            atomicAdd(&image[pathSegment.pixelIndex].x, contrib.x);
+                            atomicAdd(&image[pathSegment.pixelIndex].y, contrib.y);
+                            atomicAdd(&image[pathSegment.pixelIndex].z, contrib.z);
+                        }
+                        pathSegment.remainingBounces = 0;
+                        return;
+                    }
+                    
+                    glm::vec3 texColor(texSample.x, texSample.y, texSample.z);
+                    
+                    // Apply sRGB to linear conversion
+                    auto srgbToLinear = [](float c) {
+                        return (c <= 0.04045f) ? (c / 12.92f) : powf((c + 0.055f) / 1.055f, 2.4f);
+                    };
+                    texColor = glm::vec3(srgbToLinear(texColor.x), srgbToLinear(texColor.y), srgbToLinear(texColor.z));
+                    
                     baseColor *= texColor;
                 }
             }
             
             if (material.emittance > 0.0f) {
                 glm::vec3 contrib = pathSegment.color * (baseColor * material.emittance);
+                contrib = clampLuminance(contrib, 20.0f);
                 atomicAdd(&image[pathSegment.pixelIndex].x, contrib.x);
                 atomicAdd(&image[pathSegment.pixelIndex].y, contrib.y);
                 atomicAdd(&image[pathSegment.pixelIndex].z, contrib.z);
                 pathSegment.remainingBounces = 0; // terminate path at light source
             }
             else {
-                // Calculate intersection point
                 glm::vec3 intersectPoint = getPointOnRay(pathSegment.ray, intersection.t);
 
                 Material shadingMaterial = material;
@@ -671,7 +729,13 @@ __global__ void shadeMaterial(
                 float u, v;
                 dirToUV(pathSegment.ray.direction, u, v);
                 glm::vec3 Le = envTex(d_env.texture, u, v);
+                
+                // Scale up environment lighting for brighter scene
+                float envIntensity = 2.0f;
+                Le *= envIntensity;
+                
                 glm::vec3 contrib = pathSegment.color * Le;
+                contrib = clampLuminance(contrib, 20.0f);
                 atomicAdd(&image[pathSegment.pixelIndex].x, contrib.x);
                 atomicAdd(&image[pathSegment.pixelIndex].y, contrib.y);
                 atomicAdd(&image[pathSegment.pixelIndex].z, contrib.z);

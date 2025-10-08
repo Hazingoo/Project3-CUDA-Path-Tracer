@@ -40,9 +40,10 @@ __host__ __device__ glm::vec3 calculateRandomDirectionInHemisphere(
     glm::vec3 perpendicularDirection2 =
         glm::normalize(glm::cross(normal, perpendicularDirection1));
 
-    return up * normal
+    glm::vec3 dir = up * normal
         + cos(around) * over * perpendicularDirection1
         + sin(around) * over * perpendicularDirection2;
+    return glm::normalize(dir);
 }
 
 __host__ __device__ float schlickApproximation(
@@ -83,6 +84,7 @@ __host__ __device__ void scatterRay(
 {
     thrust::uniform_real_distribution<float> u01(0, 1);
     glm::vec3 scatterDirection;
+    float pdf = 1.0f;
     
     // Determine if we're entering or exiting the material
     bool entering = glm::dot(pathSegment.ray.direction, normal) < 0.0f;
@@ -102,11 +104,12 @@ __host__ __device__ void scatterRay(
         bool canRefract = calculateRefraction(pathSegment.ray.direction, outwardNormal, ior, refracted);
         
         if (canRefract && u01(rng) > fresnel) {
-            // Refraction
             scatterDirection = glm::normalize(refracted);
+            pdf = 1.0f - fresnel; 
         } else {
             // Total internal reflection or Fresnel reflection
             scatterDirection = calculateReflection(pathSegment.ray.direction, outwardNormal);
+            pdf = fresnel; 
         }
         
         // Ensure the direction is normalized and valid
@@ -116,19 +119,33 @@ __host__ __device__ void scatterRay(
         if (glm::length(scatterDirection) < 0.001f) {
             scatterDirection = calculateReflection(pathSegment.ray.direction, normal);
             scatterDirection = glm::normalize(scatterDirection);
+            pdf = 1.0f;
         }
     }
     else if (m.hasReflective > 0.0f) {
-        // Perfect specular reflection
         scatterDirection = calculateReflection(pathSegment.ray.direction, normal);
+        pdf = 1.0f;
     }
     else {
-        // Diffuse scattering
+        // Diffuse scattering 
         scatterDirection = calculateRandomDirectionInHemisphere(normal, rng);
+        
+        float cosThetaOut = glm::dot(scatterDirection, normal);
+        pdf = cosThetaOut / PI; 
+        
+        pdf = fmaxf(pdf, 1e-6f);
     }
     
-    pathSegment.ray.origin = intersect;
+    scatterDirection = glm::normalize(scatterDirection);
+    
+    glm::vec3 offsetNormal = (glm::dot(scatterDirection, normal) > 0.0f) ? normal : -normal;
+    pathSegment.ray.origin = intersect + 1e-4f * offsetNormal;
     pathSegment.ray.direction = scatterDirection;
     
-    pathSegment.color *= m.color;
+    if (m.hasReflective > 0.0f || m.hasRefractive > 0.0f) {
+        pathSegment.color *= m.color;
+    } else {
+        float cosThetaOut = glm::dot(scatterDirection, normal);
+        pathSegment.color *= (m.color * cosThetaOut) / (PI * pdf);
+    }
 }

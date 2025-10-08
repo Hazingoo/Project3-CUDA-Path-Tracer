@@ -12,7 +12,6 @@ ImageHost loadImage(const char* filepath) {
     int h = 0;
     int nc = 0;
     
-    // Determine if HDR or LDR image
     bool isHDR = stbi_is_hdr(filepath);
     
     if (isHDR) {
@@ -30,7 +29,7 @@ ImageHost loadImage(const char* filepath) {
         img.pixels.resize(w * h);
         
         for (int i = 0; i < w * h; i++) {
-            float r = data[3 * i + 0];`
+            float r = data[3 * i + 0];
             float g = data[3 * i + 1];
             float b = data[3 * i + 2];
             img.pixels[i] = make_float4(r, g, b, 1.0f);
@@ -70,8 +69,7 @@ ImageHost loadImage(const char* filepath) {
     }
     
     std::cout << "Loaded texture: " << filepath 
-              << " (" << img.width << "x" << img.height << ")" 
-              << (isHDR ? " [HDR]" : " [LDR]") << std::endl;
+              << " (" << img.width << "x" << img.height << ")" << std::endl;
     
     return img;
 }

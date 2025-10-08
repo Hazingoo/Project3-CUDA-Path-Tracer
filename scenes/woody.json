@@ -1,0 +1,60 @@
+{
+    "Materials": {
+        "light": {
+            "TYPE": "Emitting",
+            "RGB": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "EMITTANCE": 10.0
+        }
+    },
+    "Camera": {
+        "RES": [
+            800,
+            800
+        ],
+        "FOVY": 45.0,
+        "ITERATIONS": 5000,
+        "DEPTH": 8,
+        "FILE": "woody",
+        "EYE": [
+            0.0,
+            1.0,
+            4.0
+        ],
+        "LOOKAT": [
+            0.0,
+            1.0,
+            0.0
+        ],
+        "UP": [
+            0.0,
+            1.0,
+            0.0
+        ]
+    },
+    "EnvironmentHDR": "../../../models/hay_bales_4k.hdr",
+    "Objects": [
+        {
+            "TYPE": "mesh",
+            "FILE": "../../../models/woody/boy.obj",
+            "TRANS": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "ROTAT": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "SCALE": [
+                2.0,
+                2.0,
+                2.0
+            ]
+        }
+    ]
+}
