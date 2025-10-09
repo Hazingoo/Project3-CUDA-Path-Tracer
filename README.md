@@ -30,13 +30,28 @@ The path tracer uses JSON format for scene description. Here's the structure:
 ```json
 {
     "Materials": {
-        "material_name": {
-            "color": [R, G, B],
-            "specular": [R, G, B], 
-            "hasReflective": 0.0 or 1.0,
-            "hasRefractive": 0.0 or 1.0,
-            "indexOfRefraction": 1.0,
-            "emittance": 0.0
+        "diffuse_material": {
+            "TYPE": "Diffuse",
+            "RGB": [R, G, B]
+        },
+        "emissive_material": {
+            "TYPE": "Emitting",
+            "RGB": [R, G, B],
+            "EMITTANCE": value
+        },
+        "specular_material": {
+            "TYPE": "Specular",
+            "RGB": [R, G, B]
+        },
+        "refractive_material": {
+            "TYPE": "Refractive",
+            "RGB": [R, G, B],
+            "IOR": 1.5
+        },
+        "textured_material": {
+            "TYPE": "Diffuse",
+            "RGB": [R, G, B],
+            "TEXTURE": "path/to/texture.png"
         }
     },
     "Camera": {

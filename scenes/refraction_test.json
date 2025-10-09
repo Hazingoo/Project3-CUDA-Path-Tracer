@@ -1,0 +1,143 @@
+{
+    "Materials": {
+        "glass": {
+            "TYPE": "Refractive",
+            "RGB": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "IOR": 1.5
+        },
+        "glass_water": {
+            "TYPE": "Refractive",
+            "RGB": [
+                0.9,
+                0.95,
+                1.0
+            ],
+            "IOR": 1.333
+        },
+        "glass_diamond": {
+            "TYPE": "Refractive",
+            "RGB": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "IOR": 2.417
+        },
+        "ground": {
+            "TYPE": "Diffuse",
+            "RGB": [
+                0.7,
+                0.7,
+                0.7
+            ]
+        }
+    },
+    "Camera": {
+        "RES": [
+            1200,
+            800
+        ],
+        "FOVY": 45.0,
+        "ITERATIONS": 5000,
+        "DEPTH": 8,
+        "FILE": "refraction_test",
+        "EYE": [
+            0.0,
+            2.0,
+            8.0
+        ],
+        "LOOKAT": [
+            0.0,
+            1.5,
+            0.0
+        ],
+        "UP": [
+            0.0,
+            1.0,
+            0.0
+        ]
+    },
+    "EnvironmentHDR": "../../../models/hay_bales_4k.hdr",
+    "Objects": [
+        {
+            "TYPE": "sphere",
+            "MATERIAL": "glass",
+            "TRANS": [
+                -4.0,
+                1.5,
+                0.0
+            ],
+            "ROTAT": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "SCALE": [
+                1.5,
+                1.5,
+                1.5
+            ]
+        },
+        {
+            "TYPE": "sphere",
+            "MATERIAL": "glass_water",
+            "TRANS": [
+                0.0,
+                1.5,
+                0.0
+            ],
+            "ROTAT": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "SCALE": [
+                1.5,
+                1.5,
+                1.5
+            ]
+        },
+        {
+            "TYPE": "sphere",
+            "MATERIAL": "glass_diamond",
+            "TRANS": [
+                4.0,
+                1.5,
+                0.0
+            ],
+            "ROTAT": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "SCALE": [
+                1.5,
+                1.5,
+                1.5
+            ]
+        },
+        {
+            "TYPE": "cube",
+            "MATERIAL": "ground",
+            "TRANS": [
+                0.0,
+                -0.5,
+                0.0
+            ],
+            "ROTAT": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "SCALE": [
+                20.0,
+                1.0,
+                20.0
+            ]
+        }
+    ]
+}
