@@ -1,0 +1,126 @@
+{
+    "Materials": {},
+    "Camera": {
+        "RES": [
+            800,
+            800
+        ],
+        "FOVY": 45.0,
+        "ITERATIONS": 1500,
+        "DEPTH": 8,
+        "FILE": "restaurant_coffee_table",
+        "EYE": [
+            0.0,
+            1.5,
+            2.0
+        ],
+        "LOOKAT": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "UP": [
+            0.0,
+            1.0,
+            0.0
+        ]
+    },
+    "EnvironmentHDR": "models/warm_restaurant_4k.hdr",
+    "Objects": [
+        {
+            "TYPE": "mesh",
+            "FILE": "../../../models/restaurant/coffee-table/coffee table  obj low  .obj",
+            "TRANS": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "ROTAT": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "SCALE": [
+                1.0,
+                1.0,
+                1.0
+            ]
+        },
+        {
+            "TYPE": "mesh",
+            "FILE": "../../../models/restaurant/coffee-table/chair.obj",
+            "TRANS": [
+                1.0,
+                0.0,
+                0.0
+            ],
+            "ROTAT": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "SCALE": [
+                1.0,
+                1.0,
+                1.0
+            ]
+        },
+        {
+            "TYPE": "mesh",
+            "FILE": "../../../models/restaurant/coffee-table/chair.obj",
+            "TRANS": [
+                -1.0,
+                0.0,
+                0.0
+            ],
+            "ROTAT": [
+                0.0,
+                180.0,
+                0.0
+            ],
+            "SCALE": [
+                1.0,
+                1.0,
+                1.0
+            ]
+        },
+        {
+            "TYPE": "mesh",
+            "FILE": "../../../models/restaurant/coffee-table/chair.obj",
+            "TRANS": [
+                0.0,
+                0.0,
+                1.0
+            ],
+            "ROTAT": [
+                0.0,
+                90.0,
+                0.0
+            ],
+            "SCALE": [
+                1.0,
+                1.0,
+                1.0
+            ]
+        },
+        {
+            "TYPE": "mesh",
+            "FILE": "../../../models/restaurant/coffee-table/chair.obj",
+            "TRANS": [
+                0.0,
+                0.0,
+                -1.0
+            ],
+            "ROTAT": [
+                0.0,
+                -90.0,
+                0.0
+            ],
+            "SCALE": [
+                1.0,
+                1.0,
+                1.0
+            ]
+        }
+    ]
+}
