@@ -11,6 +11,8 @@ CUDA Path Tracer
 
 This project implements a GPU-accelerated Monte Carlo path tracer using CUDA, capable of rendering  images with global illumination, material properties, and texture mapping. The path tracer supports various geometry types including spheres, cubes, and complex OBJ meshes with multi material support.
 
+|![](img/woody.png)|
+
 #### Technical Implementation
 
 The path tracer is built on a modular architecture:
@@ -83,27 +85,54 @@ The path tracer uses JSON format for scene description. Here's the structure:
 
 Refraction simulates light bending at material interfaces using Snell's law and Fresnel equations, creating realistic glass and transparent materials. The implementation handles both entering and exiting material interfaces with proper index of refraction ratios, while Fresnel reflection increases at grazing angles to produce authentic glass appearance with energy conserving light transport. 
 
+
+|![](img/brdf.png)|![](img/reflection.png)|
+|:-:|:-:|
+|Diffuse Sphere|Specular Sphere|
+
 ## Physically-based Depth of field
 
 Physically-based depth-of-field simulates camera focus by jittering rays within an aperture, creating sharp focus on the focal plane and blur for objects outside it. A larger aperture increases the blur, mimicking real-world optics.
 
-## OBJ Support
+|![](img/no_lens.png)|![](img/dof.png)|
+|:-:|:-:|
+
+## OBJ Support + Texture Mapping
 
 OBJ loading enables complex models with multiple textures and materials by parsing MTL files and assigning per-triangle material IDs. The implementation automatically loads textures, handles UV coordinate mapping with V-flip correction, and creates materials with proper sRGB to linear conversion for realistic rendering.
 
-## Texture Mapping
-
 Texture mapping utilizes CUDA's hardware-accelerated bilinear filtering through texture objects, eliminating manual interpolation overhead. The system supports diffuse texture mapping with proper sRGB to linear conversion, alpha channel transparency, and efficient GPU memory management for high-resolution textures.
 
-
-## BVH Acceleration
-
-Bounding Volume Hierarchy acceleration structure optimizes ray-mesh intersections by organizing geometry into hierarchical bounding boxes. The implementation reduces intersection complexity from O(n) to O(log n) for complex meshes, dramatically improving rendering performance for detailed 3D models. 
-
-## Russian Roulette Path Termination
-
-Russian Roulette efficiently terminates low-contribution light paths to focus computational resources on high-impact rays. The implementation uses probabilistic termination based on path color intensity, maintaining unbiased rendering while significantly reducing computation time for deep bounces.
+|![](img/sora.png)|
+|:-:|:-:|
 
 ## Environment HDR Lighting
 
 HDR environment mapping provides realistic outdoor lighting through importance-sampled environment maps using alias method sampling. The implementation converts HDR environment data into probability distributions for efficient light sampling, creating natural lighting with proper energy distribution and realistic sky illumination. 
+
+|![](img/env_map.png)|
+|:-:|:-:|
+
+## Stochastic Antialiasing
+
+Stochastic antialiasing jitters camera rays within each pixel across multiple iterations to produce smooth anti-aliased edges. This removes jagged artifacts and creates realistic edges in the final render.
+
+|![](img/no%20alias.png)|![](img/alias.png)|
+|:-:|:-:|
+|No Antialiasing|With Antialiasing|
+
+
+## BVH Acceleration
+
+Bounding Volume Hierarchy acceleration structure optimizes ray-mesh intersections by organizing geometry into hierarchical bounding boxes. The implementation reduces intersection complexity from O(n) to O(log n) for complex meshes, dramatically improving rendering performance for detailed 3D models. Performance wise, a 100k triangle mesh wasn't able to be simulated, but otherwise with BVH on, the 80k triangle was able to be simulated with 0.3 fps
+
+## Russian Roulette Path Termination
+
+Russian Roulette efficiently terminates low-contribution light paths to focus computational resources on high-impact rays. The implementation uses probabilistic termination based on path color intensity, maintaining unbiased rendering while significantly reducing computation time for deep bounces. Performance wise, scenes with 8 bounces and Russian Roulette enabled achieved 1.5x faster rendering compared to scenes without Russian Roulette, while maintaining the same visual quality.
+
+
+## Bloopers
+
+|![](img/blooper1.png)|
+|:-:|:-:|
+
