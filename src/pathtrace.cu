@@ -88,20 +88,10 @@ __global__ void sendImageToPBO(uchar4* pbo, glm::ivec2 resolution, int iter, glm
         glm::vec3 pix = image[index];
         
         glm::vec3 avgColor = pix / (float)iter;
-        float exposure = 4.0f;  
-        avgColor *= exposure;
-        
-        glm::vec3 toneMapped = avgColor / (glm::vec3(1.0f) + avgColor);
-        
-        auto gammaCorrect = [](float c) {
-            return c <= 0.0031308f ? 12.92f * c : 1.055f * powf(c, 1.0f/2.4f) - 0.055f;
-        };
-        toneMapped = glm::vec3(gammaCorrect(toneMapped.x), gammaCorrect(toneMapped.y), gammaCorrect(toneMapped.z));
-        
         glm::ivec3 color;
-        color.x = glm::clamp((int)(toneMapped.x * 255.0f), 0, 255);
-        color.y = glm::clamp((int)(toneMapped.y * 255.0f), 0, 255);
-        color.z = glm::clamp((int)(toneMapped.z * 255.0f), 0, 255);
+        color.x = glm::clamp((int)(avgColor.x * 255.0f), 0, 255);
+        color.y = glm::clamp((int)(avgColor.y * 255.0f), 0, 255);
+        color.z = glm::clamp((int)(avgColor.z * 255.0f), 0, 255);
 
         // Each thread writes one pixel location in the texture (textel)
         pbo[index].w = 0;
@@ -650,36 +640,14 @@ __global__ void shadeMaterial(
             if (material.hasTexture && material.textureID >= 0 && textures != nullptr) {
                 cudaTextureObject_t texObj = textures[material.textureID];
                 if (texObj != 0) {
-                    float4 texSample = tex2D<float4>(texObj, intersection.uv.x, intersection.uv.y);
-                    
-                    if (texSample.w < 0.5f) {
-                        if (d_env.texture != 0) {
-                            float u, v; dirToUV(pathSegment.ray.direction, u, v);
-                            glm::vec3 Le = envTex(d_env.texture, u, v) * 2.0f;
-                            glm::vec3 contrib = clampLuminance(pathSegment.color * Le, 20.0f);
-                            atomicAdd(&image[pathSegment.pixelIndex].x, contrib.x);
-                            atomicAdd(&image[pathSegment.pixelIndex].y, contrib.y);
-                            atomicAdd(&image[pathSegment.pixelIndex].z, contrib.z);
-                        }
-                        pathSegment.remainingBounces = 0;
-                        return;
-                    }
-                    
-                    glm::vec3 texColor(texSample.x, texSample.y, texSample.z);
-                    
-                    // Apply sRGB to linear conversion
-                    auto srgbToLinear = [](float c) {
-                        return (c <= 0.04045f) ? (c / 12.92f) : powf((c + 0.055f) / 1.055f, 2.4f);
-                    };
-                    texColor = glm::vec3(srgbToLinear(texColor.x), srgbToLinear(texColor.y), srgbToLinear(texColor.z));
-                    
+                    glm::vec3 texColor = sampleTexture(texObj, intersection.uv);
                     baseColor *= texColor;
                 }
             }
             
             if (material.emittance > 0.0f) {
                 glm::vec3 contrib = pathSegment.color * (baseColor * material.emittance);
-                contrib = clampLuminance(contrib, 20.0f);
+                contrib = clampLuminance(contrib, 10.0f);
                 atomicAdd(&image[pathSegment.pixelIndex].x, contrib.x);
                 atomicAdd(&image[pathSegment.pixelIndex].y, contrib.y);
                 atomicAdd(&image[pathSegment.pixelIndex].z, contrib.z);
@@ -730,12 +698,11 @@ __global__ void shadeMaterial(
                 dirToUV(pathSegment.ray.direction, u, v);
                 glm::vec3 Le = envTex(d_env.texture, u, v);
                 
-                // Scale up environment lighting for brighter scene
-                float envIntensity = 2.0f;
+                float envIntensity = 1.0f;  
                 Le *= envIntensity;
                 
                 glm::vec3 contrib = pathSegment.color * Le;
-                contrib = clampLuminance(contrib, 20.0f);
+                contrib = clampLuminance(contrib, 10.0f);
                 atomicAdd(&image[pathSegment.pixelIndex].x, contrib.x);
                 atomicAdd(&image[pathSegment.pixelIndex].y, contrib.y);
                 atomicAdd(&image[pathSegment.pixelIndex].z, contrib.z);

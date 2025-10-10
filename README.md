@@ -83,7 +83,7 @@ The path tracer uses JSON format for scene description. Here's the structure:
 
 ## Refraction
 
-Refraction simulates light bending at material interfaces using Snell's law and Fresnel equations, creating realistic glass and transparent materials. The implementation handles both entering and exiting material interfaces with proper index of refraction ratios, while Fresnel reflection increases at grazing angles to produce authentic glass appearance with energy conserving light transport. 
+Refraction simulates light bending at material interfaces using Snell's law and Fresnel equations, creating realistic glass and transparent materials. The implementation handles both entering and exiting material interfaces with proper index of refraction ratios, with Fresnel reflection increases at grazing angles to produce authentic glass appearance with energy conserving light transport. 
 
 
 |![](img/brdf.png)|![](img/reflection.png)|
@@ -99,19 +99,17 @@ Physically-based depth-of-field simulates camera focus by jittering rays within 
 
 ## OBJ Support + Texture Mapping
 
-OBJ loading enables complex models with multiple textures and materials by parsing MTL files and assigning per-triangle material IDs. The implementation automatically loads textures, handles UV coordinate mapping with V-flip correction, and creates materials with proper sRGB to linear conversion for realistic rendering.
+OBJ loading enables complex models with multiple textures and materials by parsing MTL files and assigning per-triangle material IDs. The implementation automatically loads textures, handles UV coordinate mapping with V-flip correction, and creates materials with proper sRGB to linear conversion during texture loading for physically accurate rendering.
 
-Texture mapping utilizes CUDA's hardware-accelerated bilinear filtering through texture objects, eliminating manual interpolation overhead. The system supports diffuse texture mapping with proper sRGB to linear conversion, alpha channel transparency, and efficient GPU memory management for high-resolution textures.
+Texture mapping utilizes  bilinear filtering through texture objects. The system supports diffuse texture mapping with efficient GPU memory management for high-resolution textures.
 
-|![](img/sora.png)|
-|:-:|:-:|
+![](img/sora.png)
 
 ## Environment HDR Lighting
 
-HDR environment mapping provides realistic outdoor lighting through importance-sampled environment maps using alias method sampling. The implementation converts HDR environment data into probability distributions for efficient light sampling, creating natural lighting with proper energy distribution and realistic sky illumination. 
+HDR environment mapping provides realistic outdoor lighting by sampling high dynamic range images when rays miss scene geometry. The implementation uses spherical mapping to convert ray directions to UV coordinates and samples the HDR texture, creating natural lighting with proper energy distribution for realistic sky illumination. 
 
-|![](img/env_map.png)|
-|:-:|:-:|
+![](img/env_map.png)
 
 ## Stochastic Antialiasing
 
@@ -133,6 +131,5 @@ Russian Roulette efficiently terminates low-contribution light paths to focus co
 
 ## Bloopers
 
-|![](img/blooper1.png)|
-|:-:|:-:|
+![](img/blooper1.png)
 
